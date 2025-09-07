@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Realtime Chat</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- React (CDN) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useRef, useState } = React;
+
+    function ChatApp() {
+      const [ws, setWs] = useState(null);
+      const [status, setStatus] = useState("disconnected");
+      const [name, setName] = useState(localStorage.getItem("nick") || "");
+      const [input, setInput] = useState("");
+      const [messages, setMessages] = useState([]);
+      const [sending, setSending] = useState(false);
+      const listRef = useRef(null);
+
+      // Connect WS
+      useEffect(() => {
+        const socket = new WebSocket(`ws://${location.host}`);
+        setStatus("connecting");
+
+        socket.addEventListener("open", () => setStatus("connected"));
+        socket.addEventListener("close", () => setStatus("disconnected"));
+        socket.addEventListener("error", () => setStatus("error"));
+
+        socket.addEventListener("message", (evt) => {
+          const data = JSON.parse(evt.data);
+          if (data.type === "history") {
+            setMessages(data.messages);
+          } else if (data.type === "message") {
+            setMessages(prev => [...prev, data.message]);
+            setSending(false);
+          }
+        });
+
+        setWs(socket);
+        return () => socket.close();
+      }, []);
+
+      // Auto-scroll
+      useEffect(() => {
+        const el = listRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      }, [messages]);
+
+      const canSend = useMemo(
+        () => !!name.trim() && !!input.trim() && status === "connected",
+        [name, input, status]
+      );
+
+      function handleSaveName(e) {
+        e.preventDefault();
+        const n = name.trim();
+        if (!n) return;
+        localStorage.setItem("nick", n);
+      }
+
+      function sendMessage(e) {
+        e.preventDefault();
+        if (!canSend || !ws) return;
+        setSending(true);
+        ws.send(JSON.stringify({ type: "message", from: name.trim(), text: input.trim() }));
+        setInput("");
+      }
+
+      function formatTime(ts) {
+        const d = new Date(ts);
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      return (
+        <div className="container">
+          <header className="header">
+            <h1>Real-Time Chat</h1>
+            <span className={`badge ${status}`}>{status}</span>
+          </header>
+
+          <section className="settings">
+            <form onSubmit={handleSaveName} className="nick-form">
+              <input
+                placeholder="Your nickname"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={32}
+              />
+              <button type="submit">Save</button>
+            </form>
+          </section>
+
+          <section ref={listRef} className="messages">
+            {messages.map(m => (
+              <div key={m.id} className={`msg ${m.from === name ? "me" : ""}`}>
+                <div className="meta">
+                  <span className="from">{m.from}</span>
+                  <span className="time">{formatTime(m.ts)}</span>
+                </div>
+                <div className="text">{m.text}</div>
+              </div>
+            ))}
+          </section>
+
+          <form className="composer" onSubmit={sendMessage}>
+            <input
+              placeholder="Type a message…"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              maxLength={2000}
+            />
+            <button disabled={!canSend || sending}>
+              {sending ? "Sending…" : "Send"}
+            </button>
+          </form>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<ChatApp />);
+  </script>
+</body>
+</html>
